@@ -39,7 +39,10 @@ _pick_hf_endpoint()
 
 import faiss  # noqa: E402
 import numpy as np  # noqa: E402
-from sentence_transformers import SentenceTransformer  # noqa: E402
+
+# 注意：这里【不要】在模块层导入 sentence_transformers。
+# 云端（Streamlit Cloud）装不了 PyTorch，模块级导入会让整个脚本直接 ImportError。
+# 具体用哪个嵌入后端由下方 EmbeddedModel 运行时探测。
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 KB_TXT = os.path.join(BASE, "knowledge.txt")
