@@ -10,6 +10,8 @@
   * 对话历史存在 st.session_state.messages，这是唯一能跨交互保留的地方。
   * st.expander 折叠引用来源，方便用户核查答案依据（RAG 的可解释性）。
 """
+import os  # noqa: E402
+
 import streamlit as st  # noqa: E402
 
 # 注意：不要在这里写死 HF_ENDPOINT。
@@ -34,6 +36,7 @@ with st.sidebar:
     st.header("知识库状态")
     st.metric("文本块数量", len(kb.chunks))
     st.metric("索引向量数", kb.index.ntotal)
+    st.caption(f"嵌入后端：{kb.model.backend}　|　索引：{os.path.basename(kb.index_file)}")
     from exp4_3_rag import LLM_MODEL, LLM_NAME
     mode = f"在线生成（{LLM_NAME}/{LLM_MODEL}）" if kb.client else "离线引用模式"
     st.info(f"当前模式：{mode}")

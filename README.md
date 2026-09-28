@@ -37,9 +37,25 @@ knowledge.txt（20,078 字私有知识文档）
 |------|------|------|
 | 切分 | `RecursiveCharacterTextSplitter` | 按段落→句子递归降级，不拦腰截断章节 |
 | Embedding | `BAAI/bge-small-zh-v1.5` | 中文语义检索效果好，仅约 100MB |
+| 推理后端 | 本机 PyTorch / 云端 ONNX | 见下方"双后端适配"，实测向量一致性 0.999999 |
 | 向量库 | `FAISS IndexFlatIP` | 向量归一化后内积即余弦，精确检索、免训练 |
 | 生成 | 智谱 `glm-4-flash` | OpenAI 兼容协议，换供应商只改配置 |
 | 前端 | Streamlit | 几十行代码即可做出带引用折叠的对话界面 |
+
+### 双后端适配（为什么云端不装 PyTorch）
+
+`exp4_3_rag.EmbeddedModel` 会按顺序探测可用的嵌入后端：
+
+| 后端 | 依赖 | 用在哪 | 安装体积 |
+|------|------|--------|---------|
+| `sentence-transformers` | PyTorch | 本机复现实验（报告里的指标由它跑出） | 800MB+ |
+| `fastembed` | ONNX Runtime | Streamlit Cloud | ~150MB |
+
+原因是 PyTorch 的 **CPU 版 wheel 只在 `download.pytorch.org` 提供**，而该源在 Streamlit Cloud 上返回
+403 Forbidden；PyPI 上的 `torch` 又是数 GB 的 CUDA 版，免费实例装不下。fastembed 跑的是同一个
+`BAAI/bge-small-zh-v1.5` 模型（ONNX 形式），**实测两后端向量一致性 0.999999**，检索分数差异在
+1e-4 量级（例：0.4898 vs 0.4900），所以拒答阈值 0.40 可以共用。索引按后端分开命名
+（`kb.index` / `kb.index.fastembed`），两份都已提交，云端启动零等待。
 
 ## 三、目录结构
 
@@ -54,7 +70,9 @@ exp4-rag/
 ├── exp4_5_charts.py       ← 报告图表
 ├── build_knowledge.py     ← 指导书 docx → knowledge.txt
 ├── knowledge.txt          ← 私有知识文档（知识库本体）
-├── chunks.json / kb.index ← 切分与索引产物（已提交，云端免重建）
+├── chunks.json            ← 切分产物
+├── kb.index               ← PyTorch 后端索引（本机用）
+├── kb.index.fastembed     ← ONNX 后端索引（云端用）
 ├── requirements.txt
 └── docs/                  ← 实验报告、源码合集、图表
 ```
@@ -84,25 +102,27 @@ echo "ZHIPU_API_KEY=你的密钥" > .env
 
 ## 五、部署到 Streamlit Cloud
 
-1. 把本仓库推到 GitHub
-2. 打开 <https://share.streamlit.io> → **New app**
-3. 填写：Repository = 你的仓库，Branch = `main`，**Main file path = `app.py`**
-4. 点 **Advanced settings** → **Secrets**，填入：
+1. 打开 <https://share.streamlit.io> → **New app**
+2. 填写：Repository = `guoweidong11/exp4-rag`，Branch = `main`，**Main file path = `app.py`**
+3. 点 **Advanced settings**，务必做两件事：
+   - **Python version 选 `3.12`** ← 云端默认是 3.14，太新，faiss / numpy 等还没有对应 wheel，必然装不上
+   - **Secrets** 里填：
 
-   ```toml
-   ZHIPU_API_KEY = "你的智谱密钥"
-   ```
+     ```toml
+     ZHIPU_API_KEY = "你的智谱密钥"
+     ```
 
-   > 代码里 `_load_streamlit_secrets()` 会自动读取并注入环境变量，
-   > 不填也能启动，只是走离线引用模式。
-
-5. 点 Deploy，首次构建约需 3–5 分钟（要装 torch + 下载 100MB 模型）
+     > 代码里 `_load_streamlit_secrets()` 会自动读取并注入环境变量；
+     > 不填也能启动，只是走离线引用模式。
+4. 点 Deploy，首次构建约 2–4 分钟
 
 ### 部署小贴士
 
-- `requirements.txt` 前两行强制装 **CPU 版 torch**，否则默认会拉 ~2GB 的 CUDA 包导致构建失败
-- 模型与索引都用 `@st.cache_resource` 缓存，只有冷启动加载一次
-- 云端访问 HuggingFace 走官方源（代码自动探测端点：国内 → hf-mirror，海外 → 官方）
+- **Python 版本只能在界面里选**：Streamlit Community Cloud 不读取 `runtime.txt` / `.python-version`。
+  已部署的应用可以到 **Manage app → Settings → Advanced** 改，改完点 Reboot
+- 依赖里**刻意没有 PyTorch**（原因见"双后端适配"），所以构建很快、不容易失败
+- 模型与索引用 `@st.cache_resource` 缓存，只有冷启动加载一次
+- HuggingFace 端点自动探测：国内 → hf-mirror，海外 → 官方
 
 ## 六、实测结果
 

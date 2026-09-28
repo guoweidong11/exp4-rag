@@ -135,21 +135,66 @@ def chat_json(client, messages, temperature=0.0):
         return json.loads(m.group(0)) if m else {}
 
 
+class EmbeddedModel:
+    """嵌入后端适配层，对外只暴露 encode(texts, normalize_embeddings=True)。
+
+    为什么要适配：本机实验环境用 sentence-transformers（PyTorch），
+    但 PyTorch 的 CPU 版 wheel 只在 download.pytorch.org 提供，该源在
+    Streamlit Cloud 上会被 403 拦掉，而 PyPI 上的 torch 是数个 GB 的 CUDA 版。
+    因此云端退回 fastembed —— 同一个 BAAI/bge-small-zh-v1.5 模型，
+    走 ONNX Runtime 推理，不引入 PyTorch，体积和安装时间都可控。
+    *注意*：两个后端产出的向量空间不同（ONNX 权重做过量化），
+    所以索引文件按后端分开命名，绝不混用。
+    """
+
+    def __init__(self, model_name):
+        self.backend = None
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._st = SentenceTransformer(model_name)
+            self.backend = "sentence-transformers"
+            return
+        except Exception:
+            pass
+        try:
+            from fastembed import TextEmbedding
+            self._fe = TextEmbedding(model_name=model_name)
+            self.backend = "fastembed"
+        except Exception as e:
+            raise RuntimeError(
+                f"没有可用的嵌入后端，请安装 sentence-transformers 或 fastembed（{e}）")
+
+    def encode(self, texts, normalize_embeddings=True, batch_size=32):
+        texts = list(texts)
+        if self.backend == "sentence-transformers":
+            v = self._st.encode(texts, normalize_embeddings=normalize_embeddings,
+                                batch_size=batch_size)
+        else:
+            v = list(self._fe.embed(texts, batch_size=batch_size))
+        v = np.asarray(v, dtype=np.float32)
+        if normalize_embeddings:      # fastembed 本身已归一化，这里统一再兜一次
+            n = np.linalg.norm(v, axis=1, keepdims=True)
+            v = v / np.maximum(n, 1e-12)
+        return v
+
+
 class RAGKB:
     """知识库单例：加载 chunks + FAISS 索引 + Embedding 模型。"""
 
     def __init__(self):
-        self.model = SentenceTransformer(EMBED_MODEL)
+        self.model = EmbeddedModel(EMBED_MODEL)
+        self.index_file = (INDEX_FILE if self.model.backend == "sentence-transformers"
+                           else INDEX_FILE + ".fastembed")
         self._ensure_index()      # 索引缺失时现场重建（换机器 / 首次部署兜底）
         with open(CHUNKS_JSON, encoding="utf-8") as f:
             self.chunks = json.load(f)
-        self.index = faiss.read_index(INDEX_FILE)
+        self.index = faiss.read_index(self.index_file)
         self.client = self._build_client()
 
     def _ensure_index(self):
-        """chunks.json 或 kb.index 缺失时，用 knowledge.txt 现场切分并建索引。
-        这样仓库里只需提交 knowledge.txt 也能跑起来（Streamlit Cloud 首次启动会多花约 30 秒）。"""
-        if os.path.exists(CHUNKS_JSON) and os.path.exists(INDEX_FILE):
+        """对应后端的索引或 chunks.json 缺失时，用 knowledge.txt 现场切分并建索引。
+        这样仓库里只需提交 knowledge.txt 也能跑起来（云端首次启动多花约 30 秒）。"""
+        if os.path.exists(CHUNKS_JSON) and os.path.exists(self.index_file):
             return
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         text = open(KB_TXT, encoding="utf-8").read()
@@ -158,12 +203,12 @@ class RAGKB:
             separators=SEPARATORS).split_text(text)
         with open(CHUNKS_JSON, "w", encoding="utf-8") as f:
             json.dump(chunks, f, ensure_ascii=False, indent=1)
-        emb = np.asarray(self.model.encode(chunks, normalize_embeddings=True,
-                                           batch_size=32), dtype=np.float32)
+        emb = self.model.encode(chunks, normalize_embeddings=True, batch_size=32)
         index = faiss.IndexFlatIP(emb.shape[1])
         index.add(emb)
-        faiss.write_index(index, INDEX_FILE)
-        print(f"[自动构建] 已生成 {len(chunks)} 个文本块与索引 {INDEX_FILE}")
+        faiss.write_index(index, self.index_file)
+        print(f"[自动构建] {self.model.backend} 后端 -> {len(chunks)} 个文本块，"
+              f"索引 {self.index_file}")
 
     @staticmethod
     def _build_client():
