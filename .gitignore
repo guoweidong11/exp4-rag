@@ -1,0 +1,27 @@
+# —— 密钥：绝不提交 ——
+.env
+.streamlit/secrets.toml
+
+# —— Python ——
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# —— 评估与调优产物（本地可重跑生成）——
+eval_results.csv
+eval_results.md
+eval_summary.json
+tune_result.json
+# 根目录下的图表不提交；docs/ 里的截图是 README 用的，必须保留
+/fig*.png
+
+# —— 编辑器 / 系统 ——
+.vscode/
+.idea/
+.DS_Store
+
+# 注意：kb.index、chunks.json、knowledge.txt 必须提交，
+# 它们是知识库本体，云端没有构建环境时需要直接用。

@@ -1,0 +1,15 @@
+# 《大模型应用实训》实验四 —— RAG 知识库问答助手依赖
+# Streamlit Cloud 直接用本文件；本地安装：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 前两行很关键：默认 pip 会拉取带 CUDA 的 torch（约 2GB），
+# Streamlit Cloud 免费版极易因此超时或磁盘爆满。这里强制用 CPU 版（约 200MB）。
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+
+faiss-cpu>=1.7.4                 # 向量索引（CPU 版即可）
+sentence-transformers>=3.0       # Embedding 模型 BAAI/bge-small-zh-v1.5
+langchain-text-splitters>=0.2    # 递归字符切分器
+streamlit>=1.30                  # Web 应用框架
+openai>=1.12                     # 大模型调用（OpenAI 兼容协议，实测接智谱 GLM）
+numpy>=1.24
+matplotlib>=3.7                  # 仅用于生成评估图表，云端运行不需要
